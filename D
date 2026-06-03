@@ -1,0 +1,380 @@
+"""
+App de escritorio — Estados de México
+CRUD con tkinter + mysql-connector-python
+Requisito: pip install mysql-connector-python
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox
+import mysql.connector
+from mysql.connector import Error
+
+# ─── CONFIGURACIÓN DE CONEXIÓN ────────────────────────────────────────────────
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "root",  # ← cambia según tu usuario
+    "password": "",  # ← cambia según tu contraseña
+    "database": "mexico",
+    "charset": "utf8mb4",
+    "collation": "utf8mb4_unicode_ci",
+}
+
+# ─── COLORES Y FUENTES ────────────────────────────────────────────────────────
+COLOR_BG = "#1a1a2e"
+COLOR_PANEL = "#16213e"
+COLOR_ACCENT = "#e94560"
+COLOR_ACCENT2 = "#0f3460"
+COLOR_TEXT = "#eaeaea"
+COLOR_SUBTEXT = "#8892a4"
+COLOR_ROW_ODD = "#0d1b2a"
+COLOR_ROW_EVEN = "#112240"
+COLOR_SEL = "#e94560"
+
+FONT_TITLE = ("Georgia", 18, "bold")
+FONT_LABEL = ("Consolas", 10)
+FONT_ENTRY = ("Consolas", 11)
+FONT_BTN = ("Consolas", 10, "bold")
+FONT_TABLE = ("Consolas", 10)
+
+
+# ─── CAPA DE DATOS ────────────────────────────────────────────────────────────
+def get_connection():
+    return mysql.connector.connect(**DB_CONFIG)
+
+
+def fetch_all(): # traer todos los estados
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT nombre, abrev, area_km2 FROM estados ORDER BY nombre")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def insert_estado(nombre, abrev, area_km2):  # insertar un nuevo estado
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO estados (nombre, abrev, area_km2) VALUES (%s, %s, %s)",
+        (nombre, abrev, area_km2),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_estado(original_nombre, nombre, abrev, area_km2): # actualizar un estado existente
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE estados SET nombre=%s, abrev=%s, area_km2=%s WHERE nombre=%s",
+        (nombre, abrev, area_km2, original_nombre),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_estado(nombre):  # eliminar un estado por su nombre
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM estados WHERE nombre=%s", (nombre,))
+    conn.commit()
+    conn.close()
+
+
+# ─── APLICACIÓN ───────────────────────────────────────────────────────────────
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Estados de México")
+        self.geometry("900x600")
+        self.minsize(780, 520)
+        self.configure(bg=COLOR_BG)
+
+        self._selected_nombre = None  # nombre original al editar
+        self._build_ui()
+        self._load_data()
+
+    # ── Construcción de la interfaz ──────────────────────────────────────────
+    def _build_ui(self):
+        # ── Encabezado ──────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=COLOR_ACCENT, height=4)
+        hdr.pack(fill="x")
+
+        title_frame = tk.Frame(self, bg=COLOR_BG, pady=14)
+        title_frame.pack(fill="x", padx=24)
+        tk.Label(
+            title_frame,
+            text="⬡  Estados de México",
+            font=FONT_TITLE,
+            bg=COLOR_BG,
+            fg=COLOR_TEXT,
+        ).pack(side="left")
+        tk.Label(
+            title_frame,
+            text="Base de datos · mysql",
+            font=("Consolas", 9),
+            bg=COLOR_BG,
+            fg=COLOR_SUBTEXT,
+        ).pack(side="left", padx=14, pady=6)
+
+        # ── Contenedor principal ─────────────────────────────────────────────
+        body = tk.Frame(self, bg=COLOR_BG)
+        body.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+
+        # ── Tabla (izquierda) ────────────────────────────────────────────────
+        table_frame = tk.Frame(body, bg=COLOR_PANEL, bd=0)
+        table_frame.pack(side="left", fill="both", expand=True, padx=(0, 12))
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Custom.Treeview",
+            background=COLOR_ROW_ODD,
+            foreground=COLOR_TEXT,
+            fieldbackground=COLOR_ROW_ODD,
+            borderwidth=0,
+            rowheight=28,
+            font=FONT_TABLE,
+        )
+        style.configure(
+            "Custom.Treeview.Heading",
+            background=COLOR_ACCENT2,
+            foreground=COLOR_TEXT,
+            font=("Consolas", 10, "bold"),
+            relief="flat",
+        )
+        style.map(
+            "Custom.Treeview",
+            background=[("selected", COLOR_SEL)],
+            foreground=[("selected", "#ffffff")],
+        )
+
+        cols = ("nombre", "abrev", "area")
+        self.tree = ttk.Treeview(
+            table_frame,
+            columns=cols,
+            show="headings",
+            style="Custom.Treeview",
+            selectmode="browse",
+        )
+        self.tree.heading("nombre", text="Estado")
+        self.tree.heading("abrev", text="Abrev.")
+        self.tree.heading("area", text="Área (km²)")
+        self.tree.column("nombre", width=220, anchor="w")
+        self.tree.column("abrev", width=70, anchor="center")
+        self.tree.column("area", width=120, anchor="e")
+
+        sb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.tree.tag_configure("odd", background=COLOR_ROW_ODD)
+        self.tree.tag_configure("even", background=COLOR_ROW_EVEN)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        # ── Panel formulario (derecha) ───────────────────────────────────────
+        form_frame = tk.Frame(body, bg=COLOR_PANEL, width=260, bd=0)
+        form_frame.pack(side="right", fill="y")
+        form_frame.pack_propagate(False)
+
+        tk.Label(
+            form_frame,
+            text="FORMULARIO",
+            font=("Consolas", 9, "bold"),
+            bg=COLOR_PANEL,
+            fg=COLOR_ACCENT,
+        ).pack(pady=(18, 10))
+
+        pad = {"padx": 18, "pady": 4, "anchor": "w"}
+
+        tk.Label(
+            form_frame, text="Nombre", font=FONT_LABEL, bg=COLOR_PANEL, fg=COLOR_SUBTEXT
+        ).pack(**pad)
+        self.var_nombre = tk.StringVar()
+        self.ent_nombre = self._entry(form_frame, self.var_nombre)
+
+        tk.Label(
+            form_frame,
+            text="Abreviatura",
+            font=FONT_LABEL,
+            bg=COLOR_PANEL,
+            fg=COLOR_SUBTEXT,
+        ).pack(**pad)
+        self.var_abrev = tk.StringVar()
+        self.ent_abrev = self._entry(form_frame, self.var_abrev)
+
+        tk.Label(
+            form_frame,
+            text="Área (km²)",
+            font=FONT_LABEL,
+            bg=COLOR_PANEL,
+            fg=COLOR_SUBTEXT,
+        ).pack(**pad)
+        self.var_area = tk.StringVar()
+        self.ent_area = self._entry(form_frame, self.var_area)
+
+        # Separador
+        tk.Frame(form_frame, bg=COLOR_ACCENT2, height=1).pack(
+            fill="x", padx=18, pady=14
+        )
+
+        # Botones
+        btn_cfg = {
+            "font": FONT_BTN,
+            "bd": 0,
+            "cursor": "hand2",
+            "padx": 10,
+            "pady": 6,
+            "width": 20,
+        }
+
+        self.btn_save = tk.Button(
+            form_frame,
+            text="💾  GUARDAR / ACTUALIZAR",
+            bg=COLOR_ACCENT,
+            fg="white",
+            activebackground="#c73652",
+            activeforeground="white",
+            command=self._save,
+            **btn_cfg,
+        )
+        self.btn_save.pack(padx=18, pady=(0, 8))
+
+        tk.Button(
+            form_frame,
+            text="🗑  ELIMINAR",
+            bg=COLOR_ACCENT2,
+            fg=COLOR_TEXT,
+            activebackground="#1a4a7a",
+            activeforeground="white",
+            command=self._delete,
+            **btn_cfg,
+        ).pack(padx=18, pady=(0, 8))
+
+        tk.Button(
+            form_frame,
+            text="✕  LIMPIAR",
+            bg=COLOR_PANEL,
+            fg=COLOR_SUBTEXT,
+            activebackground=COLOR_PANEL,
+            activeforeground=COLOR_TEXT,
+            command=self._clear,
+            **btn_cfg,
+        ).pack(padx=18)
+
+        # Estado inferior
+        self.status_var = tk.StringVar(value="Listo.")
+        tk.Label(
+            form_frame,
+            textvariable=self.status_var,
+            font=("Consolas", 8),
+            bg=COLOR_PANEL,
+            fg=COLOR_SUBTEXT,
+            wraplength=220,
+            justify="center",
+        ).pack(side="bottom", pady=14, padx=12)
+
+    def _entry(self, parent, var):
+        e = tk.Entry(
+            parent,
+            textvariable=var,
+            font=FONT_ENTRY,
+            bg=COLOR_ROW_ODD,
+            fg=COLOR_TEXT,
+            insertbackground=COLOR_TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=COLOR_ACCENT2,
+            highlightcolor=COLOR_ACCENT,
+        )
+        e.pack(fill="x", padx=18, pady=(0, 6), ipady=5)
+        return e
+
+    # ── Lógica ──────────────────────────────────────────────────────────────
+    def _load_data(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        try:
+            rows = fetch_all()
+            for i, (nombre, abrev, area) in enumerate(rows):
+                tag = "odd" if i % 2 else "even"
+                self.tree.insert(
+                    "",
+                    "end",
+                    values=(nombre, abrev, f"{area:,}"),
+                    tags=(tag,),
+                )
+            self._set_status(f"{len(rows)} estados cargados.")
+        except Error as e:
+            messagebox.showerror("Error de conexión", str(e))
+
+    def _on_select(self, _event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        nombre, abrev, area = self.tree.item(sel[0], "values")
+        self._selected_nombre = nombre
+        self.var_nombre.set(nombre)
+        self.var_abrev.set(abrev)
+        self.var_area.set(area.replace(",", ""))
+
+    def _save(self):
+        nombre = self.var_nombre.get().strip()
+        abrev = self.var_abrev.get().strip().upper()
+        area = self.var_area.get().strip()
+
+        if not nombre or not abrev or not area:
+            messagebox.showwarning("Campos incompletos", "Completa todos los campos.")
+            return
+        try:
+            area_int = int(area)
+        except ValueError:
+            messagebox.showerror("Error", "El área debe ser un número entero.")
+            return
+
+        try:
+            if self._selected_nombre:
+                update_estado(self._selected_nombre, nombre, abrev, area_int)
+                self._set_status(f"'{nombre}' actualizado.")
+            else:
+                insert_estado(nombre, abrev, area_int)
+                self._set_status(f"'{nombre}' insertado.")
+            self._clear()
+            self._load_data()
+        except Error as e:
+            messagebox.showerror("Error MySQL", str(e))
+
+    def _delete(self):
+        if not self._selected_nombre:
+            messagebox.showinfo("Sin selección", "Selecciona un estado en la tabla.")
+            return
+        if not messagebox.askyesno(
+            "Confirmar", f"¿Eliminar '{self._selected_nombre}'?"
+        ):
+            return
+        try:
+            delete_estado(self._selected_nombre)
+            self._set_status(f"'{self._selected_nombre}' eliminado.")
+            self._clear()
+            self._load_data()
+        except Error as e:
+            messagebox.showerror("Error MySQL", str(e))
+
+    def _clear(self):
+        self._selected_nombre = None
+        self.var_nombre.set("")
+        self.var_abrev.set("")
+        self.var_area.set("")
+        for item in self.tree.selection():
+            self.tree.selection_remove(item)
+
+    def _set_status(self, msg):
+        self.status_var.set(msg)
+
+
+# ─── PUNTO DE ENTRADA ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
